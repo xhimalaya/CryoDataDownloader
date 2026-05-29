@@ -1,0 +1,48 @@
+{
+  "type": "FeatureCollection",
+  "name": "helheim_cds_era5",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "glacier_name": "Helheim",
+        "platform": "cds",
+        "dataset": "era5",
+        "buffer_km": 5
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -38.4,
+              66.0
+            ],
+            [
+              -37.75,
+              66.0
+            ],
+            [
+              -37.75,
+              66.45
+            ],
+            [
+              -38.4,
+              66.45
+            ],
+            [
+              -38.4,
+              66.0
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

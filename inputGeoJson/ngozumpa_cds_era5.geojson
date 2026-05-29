@@ -1,0 +1,48 @@
+{
+  "type": "FeatureCollection",
+  "name": "ngozumpa_cds_era5",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "glacier_name": "Ngozumpa",
+        "platform": "cds",
+        "dataset": "era5",
+        "buffer_km": 5
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              86.62,
+              27.84
+            ],
+            [
+              86.78,
+              27.84
+            ],
+            [
+              86.78,
+              28.01
+            ],
+            [
+              86.62,
+              28.01
+            ],
+            [
+              86.62,
+              27.84
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

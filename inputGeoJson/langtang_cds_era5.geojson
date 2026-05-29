@@ -1,0 +1,48 @@
+{
+  "type": "FeatureCollection",
+  "name": "langtang_cds_era5",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "glacier_name": "Langtang",
+        "platform": "cds",
+        "dataset": "era5",
+        "buffer_km": 5
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              85.47,
+              28.12
+            ],
+            [
+              85.69,
+              28.12
+            ],
+            [
+              85.69,
+              28.31
+            ],
+            [
+              85.47,
+              28.31
+            ],
+            [
+              85.47,
+              28.12
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

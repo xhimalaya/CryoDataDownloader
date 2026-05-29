@@ -1,0 +1,48 @@
+{
+  "type": "FeatureCollection",
+  "name": "khumbu_cds_era5",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "glacier_name": "Khumbu",
+        "platform": "cds",
+        "dataset": "era5",
+        "buffer_km": 5
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              86.77,
+              27.87
+            ],
+            [
+              86.92,
+              27.87
+            ],
+            [
+              86.92,
+              28.03
+            ],
+            [
+              86.77,
+              28.03
+            ],
+            [
+              86.77,
+              27.87
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

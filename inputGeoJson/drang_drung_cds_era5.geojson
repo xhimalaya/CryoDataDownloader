@@ -1,0 +1,48 @@
+{
+  "type": "FeatureCollection",
+  "name": "drang_drung_cds_era5",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "glacier_name": "Drang-Drung",
+        "platform": "cds",
+        "dataset": "era5",
+        "buffer_km": 5
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              76.41,
+              33.91
+            ],
+            [
+              76.49,
+              33.91
+            ],
+            [
+              76.49,
+              33.99
+            ],
+            [
+              76.41,
+              33.99
+            ],
+            [
+              76.41,
+              33.91
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

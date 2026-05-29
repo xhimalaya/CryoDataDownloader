@@ -1,0 +1,48 @@
+{
+  "type": "FeatureCollection",
+  "name": "pine_island_cds_era5",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:4326"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "glacier_name": "Pine Island",
+        "platform": "cds",
+        "dataset": "era5",
+        "buffer_km": 5
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -102.8,
+              -75.8
+            ],
+            [
+              -99.5,
+              -75.8
+            ],
+            [
+              -99.5,
+              -74.7
+            ],
+            [
+              -102.8,
+              -74.7
+            ],
+            [
+              -102.8,
+              -75.8
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}
