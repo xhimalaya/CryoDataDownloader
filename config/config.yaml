@@ -1,3 +1,9 @@
+# =============================================================================
+#  Cryosphere Intelligence Platform — config.yaml
+#  All source-level batch, output, and processing options are configurable.
+#  UI will override these values at runtime — do NOT hardcode in providers.
+# =============================================================================
+
 project:
   name: "Cryosphere Intelligence Platform"
   input_geojson_folder: "./inputGeoJson"
@@ -6,67 +12,156 @@ project:
   temp_dir: "./temp"
   log_dir: "./logs"
 
+# =============================================================================
+#  Date Range
+# =============================================================================
+
 date_range:
   start_date: "2018-01-01"
-  end_date: "2024-12-31"
+  end_date:   "2024-12-31"
+
+# =============================================================================
+#  Download Behaviour
+# =============================================================================
 
 download:
-  mode: "resilient"
-  retries: 8
-  timeout_seconds: 300
-  checkpoint_restart: true
-  auto_resume: true
-  skip_existing_files: true
-  delete_temp_files: true
-  checksum_validation: true
+  mode:                  "resilient"   # "resilient" | "strict"
+  retries:               8
+  timeout_seconds:       300
+  checkpoint_restart:    true
+  auto_resume:           true
+  skip_existing_files:   true
+  delete_temp_files:     true
+  checksum_validation:   true
+
+# =============================================================================
+#  Parallelism
+# =============================================================================
 
 parallelism:
-  async_downloads: 100
-  cpu_workers: "auto"
-  queue_size: 5000
-  dynamic_scaling: true
+  async_downloads:  100
+  cpu_workers:      "auto"          # integer or "auto"
+  queue_size:       5000
+  dynamic_scaling:  true
+
+# =============================================================================
+#  Resource Control
+# =============================================================================
 
 resource_control:
 
   cpu:
-    enabled: true
-    max_usage_percent: 70
-    reserve_cores: 2
-    throttle_enabled: true
+    enabled:            true
+    max_usage_percent:  70
+    reserve_cores:      2
+    throttle_enabled:   true
 
   ram:
-    enabled: true
-    max_usage_percent: 65
-    emergency_stop_percent: 90
-    throttle_enabled: true
+    enabled:                  true
+    max_usage_percent:        65
+    emergency_stop_percent:   90
+    throttle_enabled:         true
 
   gpu:
-    enabled: true
-    max_usage_percent: 60
-    auto_fallback_cpu: true
+    enabled:             true
+    max_usage_percent:   60
+    auto_fallback_cpu:   true
     acceleration:
-      raster_clip: true
-      reprojection: true
-      resampling: true
-      band_math: true
+      raster_clip:    true
+      reprojection:   true
+      resampling:     true
+      band_math:      true
+
+# =============================================================================
+#  Copernicus S3 Connection Pool
+# =============================================================================
 
 copernicus_s3:
-  enabled: true
-  max_connections: 100
+  enabled:                true
+  max_connections:        100
   multipart_threshold_mb: 100
-  chunk_size_mb: 64
-  stream_processing: true
-  cache_metadata: true
-  lazy_band_loading: true
-  parallel_band_reads: true
+  chunk_size_mb:          64
+  stream_processing:      true
+  cache_metadata:         true
+  lazy_band_loading:      true
+  parallel_band_reads:    true
+
+# =============================================================================
+#  Sources
+# =============================================================================
 
 sources:
 
+  # ---------------------------------------------------------------------------
+  #  ERA5 — Copernicus Climate Data Store (cdsapi)
+  # ---------------------------------------------------------------------------
+  era5:
+    enabled: true
+    provider: "cds"
+
+    # Batch mode: how many days are packed into one CDS API job
+    # Options:
+    #   "annual"  → 1  job/year   — fastest, fewest API calls  ← recommended
+    #   "monthly" → 12 jobs/year  — balanced
+    #   "daily"   → 365 jobs/year — slowest, legacy
+    batch_mode: "monthly"
+
+    # Output granularity: how the downloaded .nc is split into .tif files
+    # Options:
+    #   "daily"   → 1 .tif/day   ← required by methodology Section 4.1
+    #   "monthly" → 1 .tif/month
+    #   "single"  → 1 .tif for the entire batch
+    output_granularity: "daily"
+
+    # File management
+    delete_raw_nc: true           # delete .nc after successful .tif conversion
+
+    # Spatial buffer: adds one ERA5 grid cell (0.25°) around the AOI bbox
+    # to ensure full glacier coverage
+    bbox_buffer_deg: 0.25
+
+    # Band order = methodology Section 4.1 energy balance features
+    variables:
+      - "2m_temperature"                      # Band 1  — K
+      - "skin_temperature"                    # Band 2  — K
+      - "snowfall"                            # Band 3  — m water equiv.
+      - "snow_depth"                          # Band 4  — m water equiv.
+      - "total_precipitation"                 # Band 5  — m
+      - "surface_pressure"                    # Band 6  — Pa
+      - "surface_solar_radiation_downwards"   # Band 7  — J/m²
+      - "surface_thermal_radiation_downwards" # Band 8  — J/m²
+      - "surface_latent_heat_flux"            # Band 9  — J/m²
+      - "surface_sensible_heat_flux"          # Band 10 — J/m²
+      - "10m_u_component_of_wind"             # Band 11 — m/s
+      - "10m_v_component_of_wind"             # Band 12 — m/s
+
+  # ---------------------------------------------------------------------------
+  #  Sentinel-1 SAR — Copernicus S3 (EODATA)
+  # ---------------------------------------------------------------------------
   sentinel1:
     enabled: true
     provider: "copernicus_s3"
+
+    # Batch mode: how acquisitions are grouped per CDS/S3 search request
+    # Options:
+    #   "monthly" → search one month at a time  ← recommended (S1 cadence ~12d)
+    #   "weekly"  → search one week at a time
+    #   "daily"   → search one day at a time
+    batch_mode: "monthly"
+
+    # Output granularity: how results are stored
+    # Options:
+    #   "scene"   → one .tif per individual acquisition  ← default
+    #   "monthly" → monthly mosaic composite
+    output_granularity: "scene"
+
+    # File management
+    delete_raw_zip:   true          # delete raw .zip/.SAFE after processing
+    delete_raw_safe:  true
+
+    # SAR acquisition parameters
     product_type:
-      - "GRD"
+      - "GRD"                       # "GRD" | "SLC" | "OCN"
     orbit:
       - "ASCENDING"
       - "DESCENDING"
@@ -74,94 +169,223 @@ sources:
       - "VV"
       - "VH"
     resolution_m: 10
+
+    # Processing options
     apply_terrain_correction: true
+    apply_speckle_filter:     true   # Lee filter before output
+    speckle_filter_size:      5      # kernel size (pixels)
+    apply_border_noise_removal: true
+    output_backscatter_db:    true   # convert linear to dB
+
+    # Coherence pair generation
     coherence:
       enabled: true
       temporal_days:
-        - 12
-        - 24
+        - 12                         # standard Sentinel-1 repeat cycle
+        - 24                         # double cycle
 
+    # Cloud / quality filtering
+    cloud_cover_max: null            # not applicable for SAR
+
+  # ---------------------------------------------------------------------------
+  #  Sentinel-2 MSI — Copernicus S3 (EODATA)
+  # ---------------------------------------------------------------------------
   sentinel2:
     enabled: true
     provider: "copernicus_s3"
-    atmospheric_correction: true
-    cloud_cover_max: 25
+
+    # Batch mode: how scenes are searched per request
+    # Options:
+    #   "monthly" → one search per month  ← recommended
+    #   "weekly"  → one search per week
+    #   "daily"   → one search per day
+    batch_mode: "monthly"
+
+    # Output granularity
+    # Options:
+    #   "scene"   → one .tif per cloud-filtered acquisition  ← default
+    #   "monthly" → best-pixel monthly composite
+    output_granularity: "scene"
+
+    # File management
+    delete_raw_zip:  true
+    delete_raw_safe: true
+
+    # Quality filtering
+    atmospheric_correction: true     # use L2A (surface reflectance)
+    cloud_cover_max:        25       # % — scenes above this are skipped
+    nodata_max_percent:     10       # skip if >10% of AOI is nodata
+
+    # Spatial
     resolution_m: 10
+
+    # Bands to extract (subset of S2 L2A)
     bands:
-      - "B2"
-      - "B3"
-      - "B4"
-      - "B8"
-      - "B8A"
-      - "B11"
-      - "B12"
+      - "B2"    # Blue        — 490 nm
+      - "B3"    # Green       — 560 nm
+      - "B4"    # Red         — 665 nm
+      - "B8"    # NIR broad   — 842 nm
+      - "B8A"   # NIR narrow  — 865 nm
+      - "B11"   # SWIR-1      — 1610 nm
+      - "B12"   # SWIR-2      — 2190 nm
+
+    # Derived spectral indices (computed post-download in processing engine)
     derived_indices:
-      - "NDSI"
-      - "NDWI"
-      - "ALBEDO"
+      - "NDSI"    # Normalised Difference Snow Index
+      - "NDWI"    # Normalised Difference Water Index
+      - "ALBEDO"  # Broadband surface albedo
 
-  era5:
-    enabled: true
-    provider: "cds"
-    temporal_resolution: "hourly"
-    variables:
-      - "2m_temperature"
-      - "skin_temperature"
-      - "snowfall"
-      - "snow_depth"
-      - "total_precipitation"
-      - "surface_pressure"
-      - "surface_solar_radiation_downwards"
-      - "surface_thermal_radiation_downwards"
-      - "surface_latent_heat_flux"
-      - "surface_sensible_heat_flux"
-      - "10m_u_component_of_wind"
-      - "10m_v_component_of_wind"
-
+  # ---------------------------------------------------------------------------
+  #  MODIS Land Surface Temperature — Google Earth Engine
+  # ---------------------------------------------------------------------------
   modis_lst:
     enabled: true
     provider: "gee"
-    products:
-      - "MOD11A1"
-    bands:
-      - "LST_Day_1km"
-      - "LST_Night_1km"
 
+    # Batch mode: how dates are queried per GEE request
+    # Options:
+    #   "monthly" → one GEE export per month  ← recommended (MODIS daily res.)
+    #   "annual"  → one GEE export per year
+    #   "daily"   → one GEE export per day
+    batch_mode: "monthly"
+
+    # Output granularity
+    # Options:
+    #   "daily"   → retain individual daily composites  ← default
+    #   "monthly" → monthly mean composite
+    #   "annual"  → annual mean composite
+    output_granularity: "daily"
+
+    # File management
+    delete_raw_export: true          # delete raw GEE export after conversion
+
+    # MODIS product and bands
+    products:
+      - "MOD11A1"                    # Terra daily 1 km LST
+
+    bands:
+      - "LST_Day_1km"                # Daytime LST  — K × 0.02
+      - "LST_Night_1km"              # Nighttime LST — K × 0.02
+
+    # Quality filtering
+    qc_filter_enabled: true          # mask pixels with poor QC flags
+    scale_factor:      0.02          # apply MOD11A1 scale factor to get K
+
+  # ---------------------------------------------------------------------------
+  #  Landsat Thermal — Google Earth Engine
+  # ---------------------------------------------------------------------------
   landsat_thermal:
     enabled: true
     provider: "gee"
-    satellites:
-      - "LANDSAT_8"
-      - "LANDSAT_9"
-    bands:
-      - "ST_B10"
 
+    # Batch mode
+    # Options:
+    #   "monthly" → one GEE export per month  ← recommended (16-day repeat)
+    #   "annual"  → one GEE export per year
+    #   "daily"   → one GEE export per day
+    batch_mode: "monthly"
+
+    # Output granularity
+    # Options:
+    #   "scene"   → one .tif per Landsat pass  ← default
+    #   "monthly" → monthly median composite
+    #   "annual"  → annual median composite
+    output_granularity: "scene"
+
+    # File management
+    delete_raw_export: true
+
+    # Satellites to include
+    satellites:
+      - "LANDSAT_8"                  # OLI-TIRS, 2013–present
+      - "LANDSAT_9"                  # OLI-2/TIRS-2, 2021–present
+
+    # Thermal bands
+    bands:
+      - "ST_B10"                     # Surface temperature — K × 0.00341802 + 149.0
+
+    # Quality filtering
+    cloud_cover_max:    25           # % — scenes above this are skipped
+    apply_scale_factor: true         # convert DN to Kelvin using Landsat ST scale
+
+  # ---------------------------------------------------------------------------
+  #  Copernicus GLO-30 DEM — Copernicus S3 (EODATA)
+  # ---------------------------------------------------------------------------
   dem:
     enabled: true
     provider: "copernicus_s3"
-    source: "copernicus_dem_glo30"
-    derived_products:
-      - "slope"
-      - "aspect"
-      - "curvature"
-      - "hillshade"
-      - "sky_view_factor"
 
+    # Batch mode: DEM is static — no temporal batching needed
+    # Options:
+    #   "static"  → single download per AOI (no date loop)  ← only valid option
+    batch_mode: "static"
+
+    # Output granularity
+    # Options:
+    #   "single"  → one merged+clipped .tif per AOI  ← only valid option
+    output_granularity: "single"
+
+    # File management
+    delete_raw_tiles: true           # delete individual tile .tif files after merge
+
+    # DEM product
+    source: "copernicus_dem_glo30"
+    resolution_m: 30
+    s3_bucket: "eodata"
+
+    # Derived raster products (computed from elevation in processing engine)
+    derived_products:
+      - "slope"           # degrees
+      - "aspect"          # degrees from north
+      - "curvature"       # planform + profile
+      - "hillshade"       # 315° azimuth, 45° altitude
+      - "sky_view_factor" # 0–1, sky visibility fraction
+
+  # ---------------------------------------------------------------------------
+  #  ALOS-2 PALSAR — ASF (disabled by default)
+  # ---------------------------------------------------------------------------
   alos2:
     enabled: false
     provider: "asf"
+
+    # Batch mode
+    # Options:
+    #   "monthly" → one ASF search per month
+    #   "annual"  → one ASF search per year
+    batch_mode: "monthly"
+
+    # Output granularity
+    # Options:
+    #   "scene"   → one .tif per acquisition
+    output_granularity: "scene"
+
+    # File management
+    delete_raw_zip: true
+
+    # SAR parameters
     polarization:
       - "HH"
       - "HV"
+    resolution_m: 25
+    product_type: "RTC"              # "RTC" | "SLC" | "GRD"
+
+# =============================================================================
+#  Processing Engine
+# =============================================================================
 
 processing:
-  glacier_buffer_km: 5
-  reprojection_crs: "EPSG:4326"
-  compression: "LZW"
-  cog_optimization: true
+  glacier_buffer_km:  5
+  reprojection_crs:   "EPSG:4326"
+  compression:        "LZW"
+  cog_optimization:   true
+  nodata_value:       -9999
   output_format:
-    raw: "geotiff"
+    raw:       "geotiff"
     processed: "zarr"
+
+# =============================================================================
+#  Storage Layout
+# =============================================================================
 
 storage:
   folder_structure_by:
@@ -170,16 +394,26 @@ storage:
     - "year"
   auto_cleanup_temp: true
 
+# =============================================================================
+#  Logging
+# =============================================================================
+
 logging:
-  level: "INFO"
+  level:          "INFO"            # "DEBUG" | "INFO" | "WARNING" | "ERROR"
   save_json_logs: true
-  rotate_logs: true
+  rotate_logs:    true
+  max_log_size_mb: 50
+  backup_count:    5
+
+# =============================================================================
+#  UI
+# =============================================================================
 
 ui:
-  theme: "matte_black_purple_gold"
-  dark_mode: true
-  refresh_rate_ms: 1000
-  live_logs: true
-  animated_progress: true
-  show_gpu_monitor: true
-  show_eta: true
+  theme:              "matte_black_purple_gold"
+  dark_mode:          true
+  refresh_rate_ms:    1000
+  live_logs:          true
+  animated_progress:  true
+  show_gpu_monitor:   true
+  show_eta:           true

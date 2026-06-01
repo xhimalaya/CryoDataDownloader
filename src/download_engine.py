@@ -1,237 +1,208 @@
-import asyncio
-import random
-import os
-import time
-import hashlib
-from typing import Dict, Any, Callable, Optional
-from src.db_manager import DBManager
+"""
+download_engine.py
 
-def write_simulated_geotiff(filepath: str, geojson_path: str = None):
-    """Writes a valid small GeoTIFF file for simulated downloads using rasterio and GeoJSON bounds."""
-    try:
-        import rasterio
-        import numpy as np
-        import geopandas as gpd
-        
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        
-        # Generate some synthetic raster data (100x100 grid of floats)
-        x = np.linspace(0, 10, 100)
-        y = np.linspace(0, 10, 100)
-        grid = (np.sin(x) * np.cos(y)[:, None]).astype(np.float32)
-        
-        height, width = grid.shape
-        crs = "EPSG:4326"
-        
-        # Default bounds (Khumbu)
-        minx, miny, maxx, maxy = 86.9, 27.89, 86.91, 27.9
-        
-        if geojson_path and os.path.exists(geojson_path):
-            try:
-                gdf = gpd.read_file(geojson_path)
-                bounds = gdf.total_bounds
-                minx, miny, maxx, maxy = bounds
-                if gdf.crs:
-                    crs = str(gdf.crs)
-            except Exception as e:
-                print(f"[WARNING] Failed to parse GeoJSON bounds: {e}")
-        
-        from rasterio.transform import from_bounds
-        transform = from_bounds(minx, miny, maxx, maxy, width, height)
-        
-        with rasterio.open(
-            filepath,
-            "w",
-            driver="GTiff",
-            height=height,
-            width=width,
-            count=1,
-            dtype=grid.dtype,
-            crs=crs,
-            transform=transform,
-            compress="LZW"
-        ) as dst:
-            dst.write(grid, 1)
-        return True
-    except Exception as e:
-        print(f"[ERROR] Failed to write simulated GeoTIFF: {e}")
-        try:
-            with open(filepath, "wb") as f:
-                f.write(b"II*\x00\x08\x00\x00\x00")
-                f.truncate(100 * 1024)
-            return True
-        except Exception:
-            return False
+Orchestration layer only.
+
+Responsibilities:
+  - Select provider via registry
+  - Run search → download → process pipeline
+  - Apply retry with backoff (unchanged)
+  - Update DB on each state transition (unchanged)
+  - Fire progress callbacks (unchanged)
+  - Respect async semaphore (unchanged)
+
+This file contains NO provider logic, NO satellite-specific code,
+NO S3 logic, NO ERA5 logic, NO GeoTIFF generation.
+Max target size: ~200 lines.
+"""
+
+import asyncio
+import hashlib
+import logging
+import os
+import random
+from typing import Any, Callable, Optional
+
+from src.db_manager import DBManager
+from src.data.providers import get_provider
+from src.data.metadata.checksum import compute_md5
+
+logger = logging.getLogger(__name__)
+
 
 class DownloadEngine:
-    def __init__(self, async_downloads: int = 100, max_retries: int = 8, db_manager: DBManager = None, config: Any = None):
+    def __init__(
+        self,
+        async_downloads: int = 100,
+        max_retries: int = 8,
+        db_manager: DBManager = None,
+        config: Any = None,
+    ):
+        # --- Untouched: semaphore and retry config ---
         self.semaphore = asyncio.Semaphore(async_downloads)
         self.max_retries = max_retries
         self.db_manager = db_manager
         self.config = config
-        # List of realistic backoff intervals
         self.backoff_base = [2, 5, 10, 20, 40, 80, 180, 360]
 
     def get_backoff_delay(self, attempt: int) -> float:
-        """Calculates exponential backoff delay with ±20% random jitter."""
+        """Calculates exponential backoff delay with ±20% random jitter. Unchanged."""
         if attempt < 1:
             attempt = 1
         idx = min(attempt - 1, len(self.backoff_base) - 1)
         base = self.backoff_base[idx]
-        
-        # Apply ±20% jitter
-        jitter = base * random.uniform(0.8, 1.2)
-        return round(jitter, 2)
+        return round(base * random.uniform(0.8, 1.2), 2)
 
-    async def download_file(self, task_id: int, source: str, glacier: str, date_str: str, 
-                            output_path: str, progress_callback: Optional[Callable[[int, float], None]] = None,
-                            geojson_path: str = None) -> bool:
-        """Performs async S3 streaming or API download using a semaphore."""
+    async def download_file(
+        self,
+        task_id: int,
+        source: str,
+        glacier: str,
+        date_str: str,
+        output_path: str,
+        progress_callback: Optional[Callable[[int, float], None]] = None,
+        geojson_path: str = None,
+    ) -> bool:
+        """
+        Executes the full search → download → process pipeline for one task.
+
+        Uses the provider registry to dispatch to the correct provider.
+        Retry logic, semaphore, and DB updates are unchanged.
+
+        Args:
+            task_id: DB task ID (for status updates and progress callbacks).
+            source: Data source key (e.g. 'sentinel2', 'era5', 'dem').
+            glacier: Glacier name (used for output path and logging).
+            date_str: Target date string (YYYY-MM-DD).
+            output_path: Destination path for the downloaded file.
+            progress_callback: Optional callback(task_id, fraction 0.0–1.0 or -1.0 on failure).
+            geojson_path: Path to the glacier AOI GeoJSON.
+
+        Returns:
+            True if the full pipeline completed successfully.
+        """
         async with self.semaphore:
             attempt = 0
             success = False
             last_error = ""
 
-            # Ensure parent output directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-            # Check if S3 access is enabled for this source
-            s3_enabled = False
-            if self.config:
-                s3_enabled = self.config.get("credentials.copernicus_s3.enabled", False)
-            
-            is_copernicus_s3_source = source in ["sentinel1", "sentinel2", "dem"]
+            # Resolve provider once — outside retry loop
+            try:
+                provider = get_provider(source, self.config)
+            except ValueError as e:
+                logger.error(f"[DownloadEngine] Unknown source '{source}': {e}")
+                self._db_update(task_id, "FAILED", last_error=str(e))
+                if progress_callback:
+                    progress_callback(task_id, -1.0)
+                return False
 
             while attempt < self.max_retries and not success:
                 attempt += 1
                 try:
                     if progress_callback:
-                        progress_callback(task_id, 0.1) # Starting
+                        progress_callback(task_id, 0.05)
 
-                    # Check S3 routing
-                    if s3_enabled and is_copernicus_s3_source:
-                        endpoint_url = self.config.get("credentials.copernicus_s3.endpoint_url", "https://eodata.dataspace.copernicus.eu")
-                        access_key = self.config.get("credentials.copernicus_s3.access_key", "")
-                        secret_key = self.config.get("credentials.copernicus_s3.secret_key", "")
-                        use_anonymous = self.config.get("credentials.copernicus_s3.use_anonymous", False)
+                    # 1. Search for latest valid product
+                    logger.info(f"[DownloadEngine] [{source}] Searching: glacier={glacier} date={date_str}")
+                    product_info = await provider.search(
+                        geojson_path=geojson_path,
+                        date_str=date_str,
+                    )
 
-                        # Check if real S3 credentials are set and boto3 is importable
-                        if access_key and secret_key:
-                            try:
-                                import boto3
-                                import aioboto3
-                                
-                                print(f"[INFO] [S3 Client] Initializing aioboto3 S3 Session with endpoint {endpoint_url}...")
-                                # Real aioboto3 session connection
-                                session = aioboto3.Session()
-                                async with session.client('s3', endpoint_url=endpoint_url,
-                                                          aws_access_key_id=access_key,
-                                                          aws_secret_access_key=secret_key) as s3:
-                                    print(f"[INFO] [S3 Client] Connection established. Bucket accessed successfully.")
-                                    # Simulate key resolution and band filtering
-                                    bucket_name = "eodata"
-                                    object_key = f"{source}/{glacier.lower()}/{date_str.replace('-', '')}.tif"
-                                    
-                                    # Streaming operation
-                                    print(f"[INFO] [S3 Client] Streaming object: s3://{bucket_name}/{object_key}")
-                                    if source == "sentinel2" and self.config.get("copernicus_s3.lazy_band_loading", True):
-                                        print(f"[INFO] [S3 Client] Lazy band loading active. Streaming only: B2, B3, B4, B8, B8A, B11, B12")
-                                    
-                                    # Download chunk stream
-                                    await asyncio.sleep(random.uniform(0.4, 1.0))
-                                    
-                                    success = write_simulated_geotiff(output_path, geojson_path)
-                            except ImportError:
-                                print(f"[WARNING] boto3 or aioboto3 not found. Falling back to S3 Ingestion Simulation Mode...")
-                                # Fall through to simulated S3 streaming
-                                success = await self.simulate_s3_streaming(source, glacier, date_str, output_path, geojson_path)
-                            except Exception as s3_err:
-                                raise IOError(f"S3 Connection failed: {s3_err}")
-                        else:
-                            # SIMULATED S3 STREAMING MODE
-                            success = await self.simulate_s3_streaming(source, glacier, date_str, output_path, geojson_path)
-                    else:
-                        # Standard API REST Downloader
-                        latency = random.uniform(0.3, 1.5)
-                        await asyncio.sleep(latency)
+                    if not product_info:
+                        raise IOError(f"No valid product found for {source}/{glacier}/{date_str}")
 
-                        if attempt == 1 and random.random() < 0.15:
-                            raise IOError("Copernicus API Throttling: 429 Too Many Requests")
-                        if attempt == 2 and random.random() < 0.05:
-                            raise IOError("Network Timeout: Connection lost during download")
+                    if progress_callback:
+                        progress_callback(task_id, 0.15)
 
-                        success = write_simulated_geotiff(output_path, geojson_path)
+                    # 2. Download raw data
+                    logger.info(f"[DownloadEngine] [{source}] Downloading: {product_info.get('product_name')}")
+                    downloaded = await provider.download(
+                        product_info=product_info,
+                        output_path=output_path,
+                        progress_callback=lambda tid, p: progress_callback(task_id, 0.15 + p * 0.65)
+                        if progress_callback else None,
+                    )
 
-                    if success:
-                        # Get hash checksum of written file
-                        with open(output_path, "rb") as f:
-                            h = hashlib.md5()
-                            h.update(f.read(1024))
-                            checksum = h.hexdigest()
+                    if not downloaded:
+                        raise IOError(f"Download returned False for {product_info.get('product_name')}")
 
-                        if self.db_manager:
-                            self.db_manager.update_task_status(
-                                task_id=task_id, 
-                                status="DOWNLOADED", 
-                                filepath=output_path, 
-                                checksum=checksum,
-                                last_error=""
-                            )
-                        if progress_callback:
-                            progress_callback(task_id, 1.0)
-                    
+                    if progress_callback:
+                        progress_callback(task_id, 0.80)
+
+                    # 3. Post-download processing (reproject, clip, compress)
+                    output_dir = os.path.dirname(output_path)
+                    final_path = await provider.process(
+                        raw_path=output_path,
+                        output_dir=output_dir,
+                        geojson_path=geojson_path,
+                    )
+
+                    # 4. Compute checksum and mark complete
+                    checksum = compute_md5(final_path) if os.path.exists(final_path) else ""
+                    self._db_update(
+                        task_id,
+                        status="DOWNLOADED",
+                        filepath=final_path,
+                        checksum=checksum,
+                        last_error="",
+                    )
+
+                    if progress_callback:
+                        progress_callback(task_id, 1.0)
+
+                    logger.info(f"[DownloadEngine] [{source}] Complete: {final_path}")
+                    success = True
+
                 except Exception as e:
                     last_error = str(e)
+                    logger.warning(
+                        f"[DownloadEngine] [{source}] Attempt {attempt}/{self.max_retries} failed: {last_error}"
+                    )
+
                     if attempt < self.max_retries:
                         delay = self.get_backoff_delay(attempt)
-                        if self.db_manager:
-                            self.db_manager.update_task_status(
-                                task_id=task_id,
-                                status="FAILED",
-                                last_error=f"Attempt {attempt} failed: {last_error}. Retrying in {delay}s...",
-                                increment_retry=True
-                            )
+                        self._db_update(
+                            task_id,
+                            status="FAILED",
+                            last_error=f"Attempt {attempt} failed: {last_error}. Retrying in {delay}s...",
+                            increment_retry=True,
+                        )
                         await asyncio.sleep(delay)
                     else:
-                        if self.db_manager:
-                            self.db_manager.update_task_status(
-                                task_id=task_id,
-                                status="FAILED",
-                                last_error=f"Max retries exhausted: {last_error}",
-                                increment_retry=True
-                            )
+                        self._db_update(
+                            task_id,
+                            status="FAILED",
+                            last_error=f"Max retries exhausted: {last_error}",
+                            increment_retry=True,
+                        )
                         if progress_callback:
                             progress_callback(task_id, -1.0)
 
             return success
 
-    async def simulate_s3_streaming(self, source: str, glacier: str, date_str: str, output_path: str, geojson_path: str = None) -> bool:
-        """Simulates S3 access, lazy band streaming, and direct GeoTIFF writing."""
-        endpoint = "https://eodata.dataspace.copernicus.eu"
-        print(f"[INFO] [S3 Ingest] Resolving S3 key for {source.upper()} scene on Copernicus...")
-        await asyncio.sleep(random.uniform(0.1, 0.3))
-        
-        print(f"[INFO] [S3 Ingest] Connecting to S3 Endpoint: {endpoint} (Anonymous mode)...")
-        await asyncio.sleep(random.uniform(0.1, 0.3))
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
-        print(f"[INFO] [S3 Ingest] Opened S3 object key stream: s3://eodata/{source}/{glacier.lower()}/{date_str.replace('-', '')}.SAFE")
-        
-        if source == "sentinel2":
-            if self.config.get("copernicus_s3.lazy_band_loading", True):
-                print(f"[INFO] [S3 Ingest] Lazy band loading active. Skipping 6/13 bands to optimize RAM/disk.")
-                print(f"[INFO] [S3 Ingest] Streaming selected band objects: B2, B3, B4, B8, B8A, B11, B12")
-            else:
-                print(f"[INFO] [S3 Ingest] Streaming all 13 Sentinel-2 bands from S3 object...")
-        elif source == "sentinel1":
-            print(f"[INFO] [S3 Ingest] Streaming C-band SAR polarization sub-arrays: VV, VH")
-        elif source == "dem":
-            print(f"[INFO] [S3 Ingest] Streaming Copernicus GLO-30 static elevation tiles...")
-
-        # Add streaming speed latency
-        await asyncio.sleep(random.uniform(0.2, 0.6))
-
-        # Write final clipped-ready raw format directly
-        write_simulated_geotiff(output_path, geojson_path)
-
-        print(f"[INFO] [S3 Ingest] Stream complete. Wrote S3 object chunks directly to temporary workspace cache: {os.path.basename(output_path)}")
-        return True
+    def _db_update(
+        self,
+        task_id: int,
+        status: str,
+        filepath: str = None,
+        checksum: str = None,
+        last_error: str = None,
+        increment_retry: bool = False,
+    ) -> None:
+        """Delegates DB update to DBManager. Unchanged semantics."""
+        if self.db_manager:
+            self.db_manager.update_task_status(
+                task_id=task_id,
+                status=status,
+                filepath=filepath,
+                checksum=checksum,
+                last_error=last_error,
+                increment_retry=increment_retry,
+            )

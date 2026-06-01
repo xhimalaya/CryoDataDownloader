@@ -1,0 +1,185 @@
+project:
+  name: "Cryosphere Intelligence Platform"
+  input_geojson_folder: "./inputGeoJson"
+  output_dir: "./data"
+  metadata_dir: "./metadata"
+  temp_dir: "./temp"
+  log_dir: "./logs"
+
+date_range:
+  start_date: "2018-01-01"
+  end_date: "2024-12-31"
+
+download:
+  mode: "resilient"
+  retries: 8
+  timeout_seconds: 300
+  checkpoint_restart: true
+  auto_resume: true
+  skip_existing_files: true
+  delete_temp_files: true
+  checksum_validation: true
+
+parallelism:
+  async_downloads: 100
+  cpu_workers: "auto"
+  queue_size: 5000
+  dynamic_scaling: true
+
+resource_control:
+
+  cpu:
+    enabled: true
+    max_usage_percent: 70
+    reserve_cores: 2
+    throttle_enabled: true
+
+  ram:
+    enabled: true
+    max_usage_percent: 65
+    emergency_stop_percent: 90
+    throttle_enabled: true
+
+  gpu:
+    enabled: true
+    max_usage_percent: 60
+    auto_fallback_cpu: true
+    acceleration:
+      raster_clip: true
+      reprojection: true
+      resampling: true
+      band_math: true
+
+copernicus_s3:
+  enabled: true
+  max_connections: 100
+  multipart_threshold_mb: 100
+  chunk_size_mb: 64
+  stream_processing: true
+  cache_metadata: true
+  lazy_band_loading: true
+  parallel_band_reads: true
+
+sources:
+
+  sentinel1:
+    enabled: true
+    provider: "copernicus_s3"
+    product_type:
+      - "GRD"
+    orbit:
+      - "ASCENDING"
+      - "DESCENDING"
+    polarization:
+      - "VV"
+      - "VH"
+    resolution_m: 10
+    apply_terrain_correction: true
+    coherence:
+      enabled: true
+      temporal_days:
+        - 12
+        - 24
+
+  sentinel2:
+    enabled: true
+    provider: "copernicus_s3"
+    atmospheric_correction: true
+    cloud_cover_max: 25
+    resolution_m: 10
+    bands:
+      - "B2"
+      - "B3"
+      - "B4"
+      - "B8"
+      - "B8A"
+      - "B11"
+      - "B12"
+    derived_indices:
+      - "NDSI"
+      - "NDWI"
+      - "ALBEDO"
+
+  era5:
+    enabled: true
+    provider: "cds"
+    temporal_resolution: "hourly"
+    variables:
+      - "2m_temperature"
+      - "skin_temperature"
+      - "snowfall"
+      - "snow_depth"
+      - "total_precipitation"
+      - "surface_pressure"
+      - "surface_solar_radiation_downwards"
+      - "surface_thermal_radiation_downwards"
+      - "surface_latent_heat_flux"
+      - "surface_sensible_heat_flux"
+      - "10m_u_component_of_wind"
+      - "10m_v_component_of_wind"
+
+  modis_lst:
+    enabled: true
+    provider: "gee"
+    products:
+      - "MOD11A1"
+    bands:
+      - "LST_Day_1km"
+      - "LST_Night_1km"
+
+  landsat_thermal:
+    enabled: true
+    provider: "gee"
+    satellites:
+      - "LANDSAT_8"
+      - "LANDSAT_9"
+    bands:
+      - "ST_B10"
+
+  dem:
+    enabled: true
+    provider: "copernicus_s3"
+    source: "copernicus_dem_glo30"
+    derived_products:
+      - "slope"
+      - "aspect"
+      - "curvature"
+      - "hillshade"
+      - "sky_view_factor"
+
+  alos2:
+    enabled: false
+    provider: "asf"
+    polarization:
+      - "HH"
+      - "HV"
+
+processing:
+  glacier_buffer_km: 5
+  reprojection_crs: "EPSG:4326"
+  compression: "LZW"
+  cog_optimization: true
+  output_format:
+    raw: "geotiff"
+    processed: "zarr"
+
+storage:
+  folder_structure_by:
+    - "glacier"
+    - "source"
+    - "year"
+  auto_cleanup_temp: true
+
+logging:
+  level: "INFO"
+  save_json_logs: true
+  rotate_logs: true
+
+ui:
+  theme: "matte_black_purple_gold"
+  dark_mode: true
+  refresh_rate_ms: 1000
+  live_logs: true
+  animated_progress: true
+  show_gpu_monitor: true
+  show_eta: true
