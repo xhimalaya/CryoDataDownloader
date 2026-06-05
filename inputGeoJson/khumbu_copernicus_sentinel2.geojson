@@ -1,0 +1,33 @@
+{
+  "type": "FeatureCollection",
+  "name": "khumbu_copernicus_sentinel2",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "glacier_name": "Khumbu",
+        "platform": "copernicus",
+        "dataset": "sentinel2",
+        "buffer_km": 5
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [86.85, 27.92],
+            [86.95, 27.92],
+            [86.95, 28.02],
+            [86.85, 28.02],
+            [86.85, 27.92]
+          ]
+        ]
+      }
+    }
+  ]
+}

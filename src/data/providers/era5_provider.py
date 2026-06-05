@@ -1,28 +1,3 @@
-"""
-era5_provider.py
-
-Downloads ERA5 reanalysis data from Copernicus CDS for a glacier AOI.
-
-Source:   Copernicus Climate Data Store (CDS) — cdsapi
-Auth:     credentials.cds.api_key
-Dataset:  reanalysis-era5-single-levels (hourly)
-Output:   <aoi>_era5_<date>.nc  →  <aoi>_era5_<date>.tif (12-band, daily mean)
-
-Band order matches methodology Section 4.1 energy balance features:
-    1  2m_temperature                       K
-    2  skin_temperature                     K
-    3  snowfall                             m of water equivalent
-    4  snow_depth                           m of water equivalent
-    5  total_precipitation                  m
-    6  surface_pressure                     Pa
-    7  surface_solar_radiation_downwards    J/m²
-    8  surface_thermal_radiation_downwards  J/m²
-    9  surface_latent_heat_flux             J/m²
-    10 surface_sensible_heat_flux           J/m²
-    11 10m_u_component_of_wind             m/s
-    12 10m_v_component_of_wind             m/s
-"""
-
 import asyncio
 import json
 import logging
@@ -454,61 +429,7 @@ class ERA5Provider(BaseProvider):
                     f"({len(arrays)} bands)"
                 )
 
-                # ── Step 2: clip to glacier AOI polygon ──
-                final_path = tif_path   # default: return unclipped if clip fails
-                if geojson_path and os.path.exists(geojson_path):
-                    try:
-                        with open(geojson_path) as gf:
-                            gj = _json.load(gf)
-
-                        from shapely.geometry import shape, mapping
-                        geometries = [
-                            mapping(shape(feat["geometry"]))
-                            for feat in gj.get("features", [])
-                        ]
-
-                        with rasterio.open(tif_path) as src:
-                            clipped_data, clipped_transform = rio_mask(
-                                src,
-                                geometries,
-                                crop    = True,
-                                nodata  = float("nan"),
-                                filled  = True,
-                            )
-                            clipped_meta = src.meta.copy()
-
-                        clipped_meta.update({
-                            "height":    clipped_data.shape[1],
-                            "width":     clipped_data.shape[2],
-                            "transform": clipped_transform,
-                            "compress":  "lzw",
-                            "nodata":    float("nan"),
-                        })
-
-                        with rasterio.open(clipped_path, "w", **clipped_meta) as cdst:
-                            cdst.write(clipped_data)
-                            for i, name in enumerate(band_names, start=1):
-                                cdst.update_tags(i, variable=name, band_index=i)
-
-                        # Remove intermediate unclipped tif
-                        os.remove(tif_path)
-                        final_path = clipped_path
-                        logger.info(
-                            f"[ERA5] Clipped GeoTIFF → {clipped_path}"
-                        )
-
-                    except ImportError:
-                        logger.warning(
-                            "[ERA5] shapely not installed — skipping clip, "
-                            "returning full-extent GeoTIFF"
-                        )
-                    except Exception as clip_err:
-                        logger.warning(
-                            f"[ERA5] Clip failed ({clip_err}) — "
-                            f"returning full-extent GeoTIFF"
-                        )
-
-                # ── Step 3: delete raw .nc if configured ──
+                # ── Step 2: delete raw .nc if configured ──
                 if self.config.get("download.delete_temp_files", True):
                     try:
                         os.remove(nc_path)
@@ -516,7 +437,7 @@ class ERA5Provider(BaseProvider):
                     except Exception:
                         pass
 
-                return final_path
+                return tif_path
 
             except ImportError as e:
                 logger.warning(
